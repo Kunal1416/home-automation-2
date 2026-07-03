@@ -1,0 +1,392 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+<meta name="theme-color" content="#12151c" />
+<link rel="manifest" href="./manifest.json" />
+<link rel="apple-touch-icon" href="./icon-192.png" />
+<meta name="apple-mobile-web-app-capable" content="yes" />
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+<title>Home Control</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/mqtt/5.7.0/mqtt.min.js"></script>
+<style>
+  :root{
+    --bg:#12151c;
+    --panel:#1b1f29;
+    --panel-2:#232837;
+    --hairline:#2c3140;
+    --text:#eef0f4;
+    --muted:#8a90a3;
+    --amber:#e9c46a;
+    --amber-dim:#4a4327;
+    --teal:#5fb3a3;
+    --danger:#d9755f;
+    --radius:18px;
+  }
+  *{box-sizing:border-box; -webkit-tap-highlight-color:transparent;}
+  html,body{margin:0; padding:0; background:var(--bg); color:var(--text);
+    font-family:'Segoe UI', 'Inter', system-ui, -apple-system, sans-serif;
+    min-height:100dvh;
+  }
+  .app{max-width:520px; margin:0 auto; padding:env(safe-area-inset-top,0) 18px calc(24px + env(safe-area-inset-bottom,0)); }
+
+  header{padding:22px 2px 10px; display:flex; align-items:center; justify-content:space-between;}
+  .brand{display:flex; align-items:center; gap:10px;}
+  .brand-mark{width:34px; height:34px; border-radius:9px; border:2px solid var(--amber);
+    display:flex; align-items:center; justify-content:center;}
+  .brand-mark .pill{width:9px; height:16px; border-radius:5px; background:var(--amber);}
+  .brand h1{font-size:17px; margin:0; letter-spacing:0.2px; font-weight:600;}
+  .brand .sub{font-size:11px; color:var(--muted); letter-spacing:0.5px; text-transform:uppercase;}
+
+  .conn-badge{display:flex; align-items:center; gap:6px; font-size:11px; padding:6px 10px;
+    border-radius:100px; background:var(--panel); border:1px solid var(--hairline); color:var(--muted);}
+  .conn-dot{width:7px; height:7px; border-radius:50%; background:var(--muted);}
+  .conn-badge.local .conn-dot{background:var(--teal); box-shadow:0 0 8px var(--teal);}
+  .conn-badge.local{color:var(--teal);}
+  .conn-badge.remote .conn-dot{background:var(--amber); box-shadow:0 0 8px var(--amber);}
+  .conn-badge.remote{color:var(--amber);}
+  .conn-badge.off .conn-dot{background:var(--danger);}
+  .conn-badge.off{color:var(--danger);}
+
+  .room{margin-top:22px;}
+  .room-head{display:flex; align-items:baseline; justify-content:space-between; margin-bottom:10px; padding:0 4px;}
+  .room-head h2{font-size:14px; text-transform:uppercase; letter-spacing:1.5px; color:var(--muted); font-weight:600; margin:0;}
+  .room-head .count{font-size:12px; color:var(--muted);}
+
+  .card-grid{display:grid; grid-template-columns:1fr 1fr; gap:10px;}
+  .device{background:var(--panel); border:1px solid var(--hairline); border-radius:var(--radius);
+    padding:16px; display:flex; flex-direction:column; gap:14px; min-height:108px; justify-content:space-between;
+    transition:border-color .2s, background .2s;}
+  .device.on{border-color:var(--amber); background:linear-gradient(160deg, var(--panel-2), var(--panel));}
+  .device .name{font-size:14px; font-weight:600; line-height:1.25;}
+  .device .state-label{font-size:11px; color:var(--muted); text-transform:uppercase; letter-spacing:0.8px;}
+  .device.on .state-label{color:var(--amber);}
+
+  .switch{position:relative; width:46px; height:26px; border-radius:100px; background:#2a2f3d;
+    border:1px solid var(--hairline); align-self:flex-end; cursor:pointer; transition:background .2s;}
+  .switch .knob{position:absolute; top:2px; left:2px; width:20px; height:20px; border-radius:50%;
+    background:var(--muted); transition:transform .2s, background .2s;}
+  .device.on .switch{background:var(--amber-dim);}
+  .device.on .switch .knob{transform:translateX(20px); background:var(--amber);}
+
+  footer{margin-top:26px; text-align:center;}
+  .settings-btn{background:none; border:1px solid var(--hairline); color:var(--muted); font-size:12px;
+    padding:9px 16px; border-radius:100px; cursor:pointer;}
+  .settings-btn:active{background:var(--panel);}
+
+  .sheet-backdrop{position:fixed; inset:0; background:rgba(0,0,0,0.55); display:none; z-index:10;}
+  .sheet-backdrop.open{display:block;}
+  .sheet{position:fixed; left:0; right:0; bottom:0; background:var(--panel); border-radius:22px 22px 0 0;
+    padding:22px 20px calc(26px + env(safe-area-inset-bottom,0)); transform:translateY(100%); transition:transform .25s ease;
+    z-index:11; max-width:520px; margin:0 auto; border:1px solid var(--hairline); border-bottom:none;}
+  .sheet.open{transform:translateY(0);}
+  .sheet h3{margin:0 0 4px; font-size:16px;}
+  .sheet p.hint{font-size:12px; color:var(--muted); margin:0 0 16px;}
+  .field{margin-bottom:14px;}
+  .field label{display:block; font-size:11px; text-transform:uppercase; letter-spacing:0.6px; color:var(--muted); margin-bottom:6px;}
+  .field input{width:100%; background:var(--panel-2); border:1px solid var(--hairline); border-radius:10px;
+    padding:11px 12px; color:var(--text); font-size:14px;}
+  .sheet-actions{display:flex; gap:10px; margin-top:6px;}
+  .btn{flex:1; padding:12px; border-radius:12px; border:none; font-size:14px; font-weight:600; cursor:pointer;}
+  .btn.primary{background:var(--amber); color:#12151c;}
+  .btn.ghost{background:var(--panel-2); color:var(--text); border:1px solid var(--hairline);}
+</style>
+</head>
+<body>
+<div class="app">
+  <header>
+    <div class="brand">
+      <div class="brand-mark"><div class="pill"></div></div>
+      <div>
+        <h1>Home Control</h1>
+        <div class="sub">2 rooms</div>
+      </div>
+    </div>
+    <div class="conn-badge off" id="connBadge">
+      <div class="conn-dot"></div><span id="connText">Connecting…</span>
+    </div>
+  </header>
+
+  <div class="room" id="room1Section">
+    <div class="room-head"><h2>Room 1</h2><span class="count" id="room1Count">–</span></div>
+    <div class="card-grid" id="room1Grid"></div>
+  </div>
+
+  <div class="room" id="room2Section">
+    <div class="room-head"><h2>Room 2</h2><span class="count" id="room2Count">–</span></div>
+    <div class="card-grid" id="room2Grid"></div>
+  </div>
+
+  <footer>
+    <button class="settings-btn" id="openSettings">Device settings</button>
+  </footer>
+</div>
+
+<div class="sheet-backdrop" id="backdrop"></div>
+<div class="sheet" id="sheet">
+  <h3>Device settings</h3>
+  <p class="hint">Local address = your ESP32's mDNS name or LAN IP (used when you're on home WiFi). Home secret must match the value flashed to both ESP32 boards.</p>
+
+  <div class="field"><label>Room 1 local address</label><input id="room1Host" placeholder="room1.local"></div>
+  <div class="field"><label>Room 2 local address</label><input id="room2Host" placeholder="room2.local"></div>
+  <div class="field"><label>Home secret (from firmware)</label><input id="homeSecret" placeholder="9b207bf844c0"></div>
+  <div class="field"><label>MQTT broker (remote control)</label><input id="mqttBroker" placeholder="broker.hivemq.com"></div>
+
+  <div class="sheet-actions">
+    <button class="btn ghost" id="cancelSettings">Cancel</button>
+    <button class="btn primary" id="saveSettings">Save</button>
+  </div>
+</div>
+
+<script>
+/* ============================================================
+   CONFIG (persisted in localStorage, editable via Settings sheet)
+   ============================================================ */
+const DEFAULTS = {
+  room1Host: "room1.local",
+  room2Host: "room2.local",
+  homeSecret: "9b207bf844c0",
+  mqttBroker: "broker.hivemq.com"
+};
+
+function loadConfig(){
+  const saved = localStorage.getItem("homeControlConfig");
+  return saved ? { ...DEFAULTS, ...JSON.parse(saved) } : { ...DEFAULTS };
+}
+function saveConfig(cfg){
+  localStorage.setItem("homeControlConfig", JSON.stringify(cfg));
+}
+let config = loadConfig();
+
+const ROOMS = {
+  room1: {
+    label: "Room 1",
+    appliances: [
+      { id: 0, name: "Light 1" },
+      { id: 1, name: "Light 2" },
+      { id: 2, name: "Fan" },
+      { id: 3, name: "Socket" }
+    ]
+  },
+  room2: {
+    label: "Room 2",
+    appliances: [
+      { id: 0, name: "Light 1" },
+      { id: 1, name: "Light 2" },
+      { id: 2, name: "Fan" },
+      { id: 3, name: "AC / Socket" }
+    ]
+  }
+};
+
+let state = {
+  room1: ROOMS.room1.appliances.map(a => ({ ...a, state: false })),
+  room2: ROOMS.room2.appliances.map(a => ({ ...a, state: false }))
+};
+
+let localReachable = { room1: false, room2: false };
+let mqttClient = null;
+let mqttConnected = false;
+
+/* ============================================================
+   RENDER
+   ============================================================ */
+function render(){
+  renderRoom("room1");
+  renderRoom("room2");
+  updateConnBadge();
+}
+
+function renderRoom(roomId){
+  const grid = document.getElementById(roomId + "Grid");
+  grid.innerHTML = "";
+  const list = state[roomId];
+  document.getElementById(roomId + "Count").textContent =
+    list.filter(a => a.state).length + " of " + list.length + " on";
+
+  list.forEach(a => {
+    const card = document.createElement("div");
+    card.className = "device" + (a.state ? " on" : "");
+    card.innerHTML = `
+      <div>
+        <div class="name">${a.name}</div>
+        <div class="state-label">${a.state ? "On" : "Off"}</div>
+      </div>
+      <div class="switch"><div class="knob"></div></div>
+    `;
+    card.addEventListener("click", () => toggle(roomId, a.id));
+    grid.appendChild(card);
+  });
+}
+
+function updateConnBadge(){
+  const badge = document.getElementById("connBadge");
+  const text = document.getElementById("connText");
+  const anyLocal = localReachable.room1 || localReachable.room2;
+
+  badge.classList.remove("local", "remote", "off");
+  if (anyLocal) {
+    badge.classList.add("local");
+    text.textContent = "Home network";
+  } else if (mqttConnected) {
+    badge.classList.add("remote");
+    text.textContent = "Remote (internet)";
+  } else {
+    badge.classList.add("off");
+    text.textContent = "Offline";
+  }
+}
+
+/* ============================================================
+   CONTROL LOGIC — tries local WiFi first, falls back to internet
+   ============================================================ */
+async function toggle(roomId, applianceId){
+  const item = state[roomId].find(a => a.id === applianceId);
+  const newState = !item.state;
+
+  // Optimistic UI update
+  item.state = newState;
+  renderRoom(roomId);
+
+  const sentLocal = await sendLocal(roomId, applianceId, newState);
+  if (!sentLocal) {
+    sendRemote(roomId, applianceId, newState);
+  }
+}
+
+async function sendLocal(roomId, applianceId, newState){
+  const host = config[roomId + "Host"];
+  if (!host) return false;
+  try{
+    const ctrl = new AbortController();
+    const t = setTimeout(() => ctrl.abort(), 1200);
+    const res = await fetch(`http://${host}/relay?id=${applianceId}&state=${newState ? "on" : "off"}`, { signal: ctrl.signal });
+    clearTimeout(t);
+    if (res.ok){
+      localReachable[roomId] = true;
+      updateConnBadge();
+      return true;
+    }
+  }catch(e){
+    localReachable[roomId] = false;
+    updateConnBadge();
+  }
+  return false;
+}
+
+function sendRemote(roomId, applianceId, newState){
+  if (!mqttClient || !mqttConnected) return;
+  const topic = `home/${config.homeSecret}/${roomId}/cmd`;
+  mqttClient.publish(topic, JSON.stringify({ id: applianceId, state: newState }));
+}
+
+/* Poll local status every few seconds when on home WiFi, so switches
+   flipped physically or by another phone stay in sync */
+async function pollLocalStatus(){
+  for (const roomId of ["room1", "room2"]){
+    const host = config[roomId + "Host"];
+    if (!host) continue;
+    try{
+      const ctrl = new AbortController();
+      const t = setTimeout(() => ctrl.abort(), 1200);
+      const res = await fetch(`http://${host}/status`, { signal: ctrl.signal });
+      clearTimeout(t);
+      if (res.ok){
+        const data = await res.json();
+        localReachable[roomId] = true;
+        data.appliances.forEach(remote => {
+          const local = state[roomId].find(a => a.id === remote.id);
+          if (local) local.state = remote.state;
+        });
+        renderRoom(roomId);
+      }
+    }catch(e){
+      localReachable[roomId] = false;
+    }
+  }
+  updateConnBadge();
+}
+
+/* ============================================================
+   MQTT (remote control over the internet)
+   ============================================================ */
+function connectMqtt(){
+  if (mqttClient) { try{ mqttClient.end(true); }catch(e){} }
+  const url = `wss://${config.mqttBroker}:8884/mqtt`;
+  try{
+    mqttClient = mqtt.connect(url, { connectTimeout: 6000, reconnectPeriod: 4000 });
+  }catch(e){ return; }
+
+  mqttClient.on("connect", () => {
+    mqttConnected = true;
+    updateConnBadge();
+    mqttClient.subscribe(`home/${config.homeSecret}/room1/status`);
+    mqttClient.subscribe(`home/${config.homeSecret}/room2/status`);
+  });
+
+  mqttClient.on("close", () => { mqttConnected = false; updateConnBadge(); });
+  mqttClient.on("error", () => { mqttConnected = false; updateConnBadge(); });
+
+  mqttClient.on("message", (topic, payload) => {
+    try{
+      const msg = JSON.parse(payload.toString());
+      const roomId = topic.includes("/room1/") ? "room1" : "room2";
+      if (msg.appliances){
+        msg.appliances.forEach(remote => {
+          const local = state[roomId].find(a => a.id === remote.id);
+          if (local) local.state = remote.state;
+        });
+        renderRoom(roomId);
+      }
+    }catch(e){}
+  });
+}
+
+/* ============================================================
+   SETTINGS SHEET
+   ============================================================ */
+const sheet = document.getElementById("sheet");
+const backdrop = document.getElementById("backdrop");
+
+function openSheet(){
+  document.getElementById("room1Host").value = config.room1Host;
+  document.getElementById("room2Host").value = config.room2Host;
+  document.getElementById("homeSecret").value = config.homeSecret;
+  document.getElementById("mqttBroker").value = config.mqttBroker;
+  sheet.classList.add("open");
+  backdrop.classList.add("open");
+}
+function closeSheet(){
+  sheet.classList.remove("open");
+  backdrop.classList.remove("open");
+}
+
+document.getElementById("openSettings").addEventListener("click", openSheet);
+document.getElementById("cancelSettings").addEventListener("click", closeSheet);
+backdrop.addEventListener("click", closeSheet);
+document.getElementById("saveSettings").addEventListener("click", () => {
+  config.room1Host = document.getElementById("room1Host").value.trim() || DEFAULTS.room1Host;
+  config.room2Host = document.getElementById("room2Host").value.trim() || DEFAULTS.room2Host;
+  config.homeSecret = document.getElementById("homeSecret").value.trim() || DEFAULTS.homeSecret;
+  config.mqttBroker = document.getElementById("mqttBroker").value.trim() || DEFAULTS.mqttBroker;
+  saveConfig(config);
+  closeSheet();
+  connectMqtt();
+  pollLocalStatus();
+});
+
+/* ============================================================
+   INIT
+   ============================================================ */
+render();
+connectMqtt();
+pollLocalStatus();
+setInterval(pollLocalStatus, 4000);
+
+if ("serviceWorker" in navigator) {
+  navigator.serviceWorker.register("./sw.js").catch(() => {});
+}
+</script>
+</body>
+</html>
